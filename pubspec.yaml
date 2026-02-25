@@ -1,0 +1,27 @@
+name: solana_pay
+description: "Solana Pay Demo - Merchant/Customer QR payment flow on devnet"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  solana: ^0.32.0
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.2.0
+  url_launcher: ^6.3.0
+  shared_preferences: ^2.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+    - assets/logos/
