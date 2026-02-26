@@ -78,7 +78,7 @@ class SolanaService {
 
     final instructions = <Instruction>[];
 
-    // Create recipient ATA if needed
+    // Create recipient ATA if it doesn't exist yet
     if (!await _ataExists(recipientAta)) {
       instructions.add(AssociatedTokenAccountInstruction.createAccount(
         funder: sender.publicKey,
@@ -107,11 +107,39 @@ class SolanaService {
       data: transferIx.data,
     ));
 
-    return _client.sendAndConfirmTransaction(
-      message: Message(instructions: instructions),
-      signers: [sender],
-      commitment: Commitment.confirmed,
-    );
+    // Retry once on transient errors (devnet RPC instability)
+    try {
+      return await _client.sendAndConfirmTransaction(
+        message: Message(instructions: instructions),
+        signers: [sender],
+        commitment: Commitment.confirmed,
+      );
+    } catch (e) {
+      await Future.delayed(const Duration(seconds: 1));
+      // Rebuild instructions on retry (ATA may have been created)
+      final retryInstructions = <Instruction>[];
+      if (!await _ataExists(recipientAta)) {
+        retryInstructions.add(AssociatedTokenAccountInstruction.createAccount(
+          funder: sender.publicKey,
+          address: recipientAta,
+          owner: recipientPubKey,
+          mint: mint,
+        ));
+      }
+      retryInstructions.add(Instruction(
+        programId: transferIx.programId,
+        accounts: [
+          ...transferIx.accounts,
+          AccountMeta.readonly(pubKey: reference, isSigner: false),
+        ],
+        data: transferIx.data,
+      ));
+      return _client.sendAndConfirmTransaction(
+        message: Message(instructions: retryInstructions),
+        signers: [sender],
+        commitment: Commitment.confirmed,
+      );
+    }
   }
 
   // Payment Polling

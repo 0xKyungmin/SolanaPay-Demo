@@ -149,18 +149,13 @@ class _MerchantSuccessScreenState extends State<MerchantSuccessScreen>
               ),
               const SizedBox(height: 40),
 
-              // New Payment
+              // Complete
               SizedBox(
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/merchant/amount',
-                      (route) => route.isFirst,
-                      arguments: {'walletAddress': args['recipient']},
-                    );
+                    Navigator.of(context).popUntil((route) => route.isFirst);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF7C3AED),
@@ -171,7 +166,7 @@ class _MerchantSuccessScreenState extends State<MerchantSuccessScreen>
                     ),
                   ),
                   child: const Text(
-                    '새 결제 받기',
+                    '완료',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
                   ),
                 ),

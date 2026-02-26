@@ -30,6 +30,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Brand get _brand => SettingsService.instance.selectedBrand;
 
+  // Hidden settings: 5 taps within 2 seconds
+  int _settingsTapCount = 0;
+  DateTime? _firstTapTime;
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +72,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _toggleWallet() {
     setState(() => _walletIndex = _walletIndex == 0 ? 1 : 0);
+  }
+
+  void _onPoweredByTap() {
+    final now = DateTime.now();
+    if (_firstTapTime == null || now.difference(_firstTapTime!) > const Duration(seconds: 2)) {
+      _settingsTapCount = 1;
+      _firstTapTime = now;
+    } else {
+      _settingsTapCount++;
+    }
+    if (_settingsTapCount >= 5) {
+      _settingsTapCount = 0;
+      _firstTapTime = null;
+      _openSettings();
+    }
   }
 
   Future<void> _openSettings() async {
@@ -283,7 +302,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 16),
                   child: GestureDetector(
-                    onTap: _openSettings,
+                    onTap: _onPoweredByTap,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(

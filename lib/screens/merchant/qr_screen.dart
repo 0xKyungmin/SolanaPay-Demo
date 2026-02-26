@@ -57,6 +57,8 @@ class _QrScreenState extends State<QrScreen> {
       reference: reference.address,
     );
 
+    debugPrint('Solana Pay URL: $url');
+
     setState(() {
       _payUrl = url;
       _referenceAddress = reference.address;
@@ -174,6 +176,7 @@ class _QrScreenState extends State<QrScreen> {
                         data: _payUrl!,
                         version: QrVersions.auto,
                         size: 240,
+                        errorCorrectionLevel: QrErrorCorrectLevel.H,
                         eyeStyle: const QrEyeStyle(
                           eyeShape: QrEyeShape.circle,
                           color: Color(0xFF7C3AED),
@@ -181,6 +184,10 @@ class _QrScreenState extends State<QrScreen> {
                         dataModuleStyle: const QrDataModuleStyle(
                           dataModuleShape: QrDataModuleShape.circle,
                           color: Color(0xFF1E1E2E),
+                        ),
+                        embeddedImage: const AssetImage('assets/logos/solana.png'),
+                        embeddedImageStyle: const QrEmbeddedImageStyle(
+                          size: Size(40, 40),
                         ),
                       ),
                     ),
