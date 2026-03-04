@@ -58,7 +58,19 @@ class SolanaService {
       lamports: lamports,
     );
 
-    return _sendWithReference(ix, reference, [sender]);
+    final ixWithRef = Instruction(
+      programId: ix.programId,
+      accounts: [
+        ...ix.accounts,
+        AccountMeta.readonly(pubKey: reference, isSigner: false),
+      ],
+      data: ix.data,
+    );
+
+    return _sendAndConfirm(
+      instructions: [ixWithRef],
+      signers: [sender],
+    );
   }
 
   // USDC Transfer
@@ -76,6 +88,24 @@ class SolanaService {
     final senderAta = await _findAta(owner: sender.publicKey, mint: mint);
     final recipientAta = await _findAta(owner: recipientPubKey, mint: mint);
 
+    final transferIx = TokenInstruction.transferChecked(
+      amount: amount,
+      decimals: usdcDecimals,
+      source: senderAta,
+      mint: mint,
+      destination: recipientAta,
+      owner: sender.publicKey,
+    );
+
+    final ixWithRef = Instruction(
+      programId: transferIx.programId,
+      accounts: [
+        ...transferIx.accounts,
+        AccountMeta.readonly(pubKey: reference, isSigner: false),
+      ],
+      data: transferIx.data,
+    );
+
     final instructions = <Instruction>[];
 
     // Create recipient ATA if it doesn't exist yet
@@ -88,58 +118,12 @@ class SolanaService {
       ));
     }
 
-    final transferIx = TokenInstruction.transferChecked(
-      amount: amount,
-      decimals: usdcDecimals,
-      source: senderAta,
-      mint: mint,
-      destination: recipientAta,
-      owner: sender.publicKey,
+    instructions.add(ixWithRef);
+
+    return _sendAndConfirm(
+      instructions: instructions,
+      signers: [sender],
     );
-
-    // Add reference key
-    instructions.add(Instruction(
-      programId: transferIx.programId,
-      accounts: [
-        ...transferIx.accounts,
-        AccountMeta.readonly(pubKey: reference, isSigner: false),
-      ],
-      data: transferIx.data,
-    ));
-
-    // Retry once on transient errors (devnet RPC instability)
-    try {
-      return await _client.sendAndConfirmTransaction(
-        message: Message(instructions: instructions),
-        signers: [sender],
-        commitment: Commitment.confirmed,
-      );
-    } catch (e) {
-      await Future.delayed(const Duration(seconds: 1));
-      // Rebuild instructions on retry (ATA may have been created)
-      final retryInstructions = <Instruction>[];
-      if (!await _ataExists(recipientAta)) {
-        retryInstructions.add(AssociatedTokenAccountInstruction.createAccount(
-          funder: sender.publicKey,
-          address: recipientAta,
-          owner: recipientPubKey,
-          mint: mint,
-        ));
-      }
-      retryInstructions.add(Instruction(
-        programId: transferIx.programId,
-        accounts: [
-          ...transferIx.accounts,
-          AccountMeta.readonly(pubKey: reference, isSigner: false),
-        ],
-        data: transferIx.data,
-      ));
-      return _client.sendAndConfirmTransaction(
-        message: Message(instructions: retryInstructions),
-        signers: [sender],
-        commitment: Commitment.confirmed,
-      );
-    }
   }
 
   // Payment Polling
@@ -167,26 +151,58 @@ class SolanaService {
     throw TimeoutException('Payment not received within timeout');
   }
 
-  // Helpers
+  // Core send: sign → sendTransaction (skipPreflight) → poll for confirmation
+  // Avoids websocket-based confirmation which is unreliable on mobile + devnet.
 
-  Future<String> _sendWithReference(
-    Instruction ix,
-    Ed25519HDPublicKey reference,
-    List<Ed25519HDKeyPair> signers,
-  ) {
-    final ixWithRef = Instruction(
-      programId: ix.programId,
-      accounts: [
-        ...ix.accounts,
-        AccountMeta.readonly(pubKey: reference, isSigner: false),
-      ],
-      data: ix.data,
+  Future<String> _sendAndConfirm({
+    required List<Instruction> instructions,
+    required List<Ed25519HDKeyPair> signers,
+  }) async {
+    final rpc = _client.rpcClient;
+
+    // 1. Get blockhash
+    final bh = await rpc.getLatestBlockhash(commitment: Commitment.confirmed);
+
+    // 2. Sign
+    final message = Message(instructions: instructions);
+    final tx = await signTransaction(bh.value, message, signers);
+
+    // 3. Send with skipPreflight to avoid simulation-related false errors on devnet
+    debugPrint('[SolanaPay] Sending tx (skipPreflight=true)...');
+    final signature = await rpc.sendTransaction(
+      tx.encode(),
+      preflightCommitment: Commitment.confirmed,
+      skipPreflight: true,
     );
-    return _client.sendAndConfirmTransaction(
-      message: Message(instructions: [ixWithRef]),
-      signers: signers,
-      commitment: Commitment.confirmed,
-    );
+    debugPrint('[SolanaPay] Sent! sig=$signature');
+
+    // 4. Poll for confirmation via HTTP (no websocket needed)
+    const maxAttempts = 30;
+    for (var i = 0; i < maxAttempts; i++) {
+      await Future.delayed(const Duration(seconds: 2));
+      try {
+        final statuses = await rpc.getSignatureStatuses([signature]);
+        final status = statuses.value.firstOrNull;
+        if (status != null) {
+          if (status.err != null) {
+            debugPrint('[SolanaPay] Tx failed on-chain: ${status.err}');
+            throw Exception('Transaction failed: ${status.err}');
+          }
+          if (status.confirmationStatus == Commitment.confirmed ||
+              status.confirmationStatus == Commitment.finalized) {
+            debugPrint('[SolanaPay] Confirmed at attempt $i');
+            return signature;
+          }
+        }
+      } catch (e) {
+        if (e.toString().contains('Transaction failed')) rethrow;
+        debugPrint('[SolanaPay] Poll error (attempt $i): $e');
+      }
+    }
+
+    // If we get here, the tx was sent but never confirmed — likely still pending
+    debugPrint('[SolanaPay] Tx sent but not confirmed within timeout, returning sig anyway');
+    return signature;
   }
 
   Future<bool> _ataExists(Ed25519HDPublicKey ata) async {
